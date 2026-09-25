@@ -1,0 +1,19 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+
+# 会话持久化
+.dev-assistant-store/
+
+# 本地模型配置（含密钥，不入库）
+.dev-assistant-models.toml
+
+# 日志
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store

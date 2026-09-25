@@ -1,0 +1,43 @@
+# dev-assistant-ts 模型配置示例
+# 使用方法:
+#   1. cp .dev-assistant-models.toml.example .dev-assistant-models.toml
+#   2. 填入你的 API 密钥（支持 ${ENV_VAR} 占位符，从环境变量解析）
+#
+# 至少定义一个 provider 条目；LlmClient 会按顺序做故障转移。
+
+[[models]]
+name = "gpt"
+provider = "openai"            # openai | openai-compatible | ollama | anthropic
+api_url = "https://api.openai.com/v1"
+api_key = "${OPENAI_API_KEY}"  # 环境变量占位符
+model = "gpt-4o"
+temperature = 0.2
+max_output_tokens = 8192
+# reasoning_effort = "medium"  # low | medium | high | none | max | xhigh（可选）
+
+# OpenAI 兼容服务（DeepSeek / 自部署等）
+[[models]]
+name = "deepseek"
+provider = "openai-compatible"
+api_url = "https://api.deepseek.com/v1"
+api_key = "${DEEPSEEK_API_KEY}"
+model = "deepseek-chat"
+temperature = 0.2
+
+# Ollama 本地模型
+[[models]]
+name = "ollama"
+provider = "ollama"
+api_url = "http://127.0.0.1:11434/v1"
+api_key = "ollama"
+model = "qwen2.5:14b"
+max_output_tokens = 4096
+
+# Anthropic（注意：api_url 指向 messages 端点前缀，不含 /v1/messages）
+[[models]]
+name = "claude"
+provider = "anthropic"
+api_url = "https://api.anthropic.com/v1"
+api_key = "${ANTHROPIC_API_KEY}"
+model = "claude-sonnet-4-5"
+temperature = 0.2
