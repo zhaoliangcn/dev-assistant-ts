@@ -6,6 +6,8 @@
  * - 应传数组却传了逗号分隔字符串
  * - 应传数字却传了数字字符串
  * - 多余的空格 / null
+ * - 漏写外层花括号，输出裸键值对（如 `"target": "整个仓库"`）
+ * - 键未加引号（如 `target: "整个仓库"`）
  *
  * 本模块提供一组容错取值函数，避免 Agent 因参数形状问题反复失败。
  */
@@ -93,6 +95,31 @@ export function lenientParseArgs(json: string): { args: Record<string, unknown>;
         return {
           args: (Array.isArray(parsed) ? {} : parsed) as Record<string, unknown>,
           warning: '工具参数含 markdown 围栏，已自动清理',
+        }
+      }
+    } catch {
+      // 继续
+    }
+    // 常见错误②：LLM 漏写外层花括号，输出了裸键值对（如 `"target": "整个仓库"`）
+    try {
+      const parsed = JSON.parse(`{${cleaned}}`)
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return {
+          args: parsed as Record<string, unknown>,
+          warning: '工具参数缺少外层花括号，已自动补全；请直接输出标准 JSON 对象',
+        }
+      }
+    } catch {
+      // 继续
+    }
+    // 常见错误③：键未加引号（如 `target: "整个仓库"`）——补键引号后再包花括号
+    try {
+      const repaired = `{${cleaned}}`.replace(/([{,]\s*)([A-Za-z_][\w-]*)\s*:/g, '$1"$2":')
+      const parsed = JSON.parse(repaired)
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        return {
+          args: parsed as Record<string, unknown>,
+          warning: '工具参数键未加引号，已自动修复；请直接输出标准 JSON 对象',
         }
       }
     } catch {
