@@ -4,6 +4,9 @@ node_modules/
 # 构建产物
 dist/
 
+# 测试覆盖率报告
+coverage/
+
 # 会话持久化
 .dev-assistant-store/
 

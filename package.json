@@ -32,6 +32,7 @@
     "dev": "tsx src/main.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit"
   },
@@ -57,6 +58,7 @@
     "@types/node": "^24.13.6",
     "@types/react": "^19.2.0",
     "@types/ws": "^8.18.0",
+    "@vitest/coverage-v8": "^3.2.7",
     "eslint": "^9.39.5",
     "ink": "^7.1.1",
     "ink-spinner": "^5.0.0",

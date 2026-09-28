@@ -170,7 +170,7 @@ export class AnthropicProvider implements LlmProvider {
             text: cb.type === 'text' ? cb.text ?? '' : undefined,
             id: cb.id,
             name: cb.name,
-            args: cb.type === 'tool_use' ? JSON.stringify(cb.input ?? {}) : '',
+            args: cb.type === 'tool_use' ? seedToolArgs(cb.input) : '',
           }
           if (cb.type === 'tool_use' && cb.id) toolCallIds[idx] = cb.id
         } else if (etype === 'content_block_delta') {
@@ -259,4 +259,15 @@ function safeJson(s: string): unknown {
   } catch {
     return {}
   }
+}
+
+/**
+ * tool_use 块的参数初值。
+ * Anthropic 流式协议里 `content_block_start.content_block.input` 恒为空对象 `{}`，
+ * 真正的参数通过后续 `input_json_delta.partial_json` 增量下发。
+ * 若把 `{}` 序列化做初值，会与增量拼接成 `{}{"a":1}` 这类非法 JSON，因此仅在非空时采用。
+ */
+function seedToolArgs(input: unknown): string {
+  if (input && typeof input === 'object' && Object.keys(input).length > 0) return JSON.stringify(input)
+  return ''
 }
