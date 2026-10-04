@@ -293,6 +293,24 @@ describe('ToolRegistry.execute 安全评估与审批', () => {
     expect(probe.calls).toHaveLength(1)
   })
 
+  it('审批回调自身抛错：返回 transient 失败结果而非 reject，且不执行 handler', async () => {
+    const log: Seen = { calls: 0 }
+    const registry = newRegistry(
+      makeSpec({ name: 'write_file', dangerLevel: 'high', approvalScope: 'file' }),
+      echoHandler(log),
+    )
+    const approval = async (): Promise<boolean> => {
+      throw new Error('审批存储不可用')
+    }
+    const result = await registry.execute('write_file', '{"path":"notes.md"}', makeContext(), approval)
+
+    expect(log.calls).toBe(0)
+    expect(result.success).toBe(false)
+    expect(result.errorCategory).toBe('transient')
+    expect(result.content).toBe('审批检查失败: 审批存储不可用')
+    expect(result.securityEvaluation?.approvalRequirement?.scope).toBe('file')
+  })
+
   it('exec_command 命令风险动态升级进入拒绝文案', async () => {
     const probe: ApprovalProbe = { calls: [], approved: false }
     const registry = newRegistry(

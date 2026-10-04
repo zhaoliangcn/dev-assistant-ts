@@ -149,6 +149,8 @@ export class AnthropicProvider implements LlmProvider {
     }
     const blocks: Block[] = []
     const toolCallIds: string[] = []
+    /** 已通过 input_json_delta 发过增量的块（块结束时判断是否需要补发完整调用） */
+    const deltaEmitted: boolean[] = []
 
     try {
       for await (const line of sseDataLines(res.body, signal)) {
@@ -188,6 +190,23 @@ export class AnthropicProvider implements LlmProvider {
             yield { kind: 'reasoning', content: d.thinking }
           } else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') {
             block.args += d.partial_json
+            deltaEmitted[idx] = true
+            yield {
+              kind: 'toolCallDelta',
+              index: idx,
+              call: {
+                id: toolCallIds[idx] ?? '',
+                function: { name: block.name ?? '', arguments: block.args },
+              },
+            }
+          }
+        } else if (etype === 'content_block_stop') {
+          // 兜底：部分网关在 content_block_start 直接下发完整 input 且无任何增量，
+          // 不补发的话该 tool_use 会被整块丢弃
+          const idx: number = obj.index ?? 0
+          const block = blocks[idx]
+          if (block?.type === 'tool_use' && !deltaEmitted[idx]) {
+            deltaEmitted[idx] = true
             yield {
               kind: 'toolCallDelta',
               index: idx,

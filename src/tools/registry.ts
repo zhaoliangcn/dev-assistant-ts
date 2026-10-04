@@ -126,7 +126,20 @@ export class ToolRegistry {
       securityEvaluation = evaluateTool(spec, args)
       if (securityEvaluation.approvalRequirement && approval) {
         const scope = approvalScopeKey(spec, args)
-        const approved = await approval(securityEvaluation)
+        let approved: boolean
+        try {
+          approved = await approval(securityEvaluation)
+        } catch (e) {
+          // 审批子系统自身故障（区别于用户拒绝）：execute 契约是永远返回 ToolResult
+          const msg = e instanceof Error ? e.message : String(e)
+          return {
+            success: false,
+            content: `审批检查失败: ${msg}`,
+            securityEvaluation,
+            restartRequested: false,
+            errorCategory: 'transient',
+          }
+        }
         if (!approved) {
           return {
             success: false,

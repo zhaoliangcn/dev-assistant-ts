@@ -169,13 +169,17 @@ describe('runShell', () => {
 
   it('自定义 env 注入生效，且继承 process.env', async () => {
     process.env.DEV_ASSISTANT_TEST_INHERIT = 'inherited-ok'
-    const r = await runShell({
-      command: 'printf "%s|%s|%s" "$DEV_ASSISTANT_EVENT" "$DEV_ASSISTANT_TOOL" "$DEV_ASSISTANT_TEST_INHERIT"',
-      cwd: dir,
-      env: { DEV_ASSISTANT_EVENT: 'pre-tool', DEV_ASSISTANT_TOOL: 'write_file' },
-    })
-    expect(r.stdout).toBe('pre-tool|write_file|inherited-ok')
-    delete process.env.DEV_ASSISTANT_TEST_INHERIT
+    try {
+      const r = await runShell({
+        command: 'printf "%s|%s|%s" "$DEV_ASSISTANT_EVENT" "$DEV_ASSISTANT_TOOL" "$DEV_ASSISTANT_TEST_INHERIT"',
+        cwd: dir,
+        env: { DEV_ASSISTANT_EVENT: 'pre-tool', DEV_ASSISTANT_TOOL: 'write_file' },
+      })
+      expect(r.stdout).toBe('pre-tool|write_file|inherited-ok')
+    } finally {
+      // 断言失败也不能把环境变量泄漏给同 worker 的其他测试文件
+      delete process.env.DEV_ASSISTANT_TEST_INHERIT
+    }
   })
 
   it('cwd 生效（相对路径在 cwd 下可解析）', async () => {

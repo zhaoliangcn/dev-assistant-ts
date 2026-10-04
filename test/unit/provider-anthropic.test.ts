@@ -330,6 +330,7 @@ describe('AnthropicProvider.chatStream 事件解析', () => {
         }),
         sse({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"path' } }),
         sse({ type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '":"a.ts"}' } }),
+        sse({ type: 'content_block_stop', index: 0 }),
         sse({ type: 'message_delta', usage: { output_tokens: 2 } }),
       ],
     })
@@ -364,6 +365,66 @@ describe('AnthropicProvider.chatStream 事件解析', () => {
       { path: 'a' },
       { path: 'b' },
     ])
+  })
+
+  it('content_block_start 直接携带完整 input 且无增量（网关形态）→ 块结束时补发完整 toolCallDelta', async () => {
+    const http = new FakeHttp({
+      sse: [
+        sse({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu_gw', name: 'read_file', input: { path: 'a.ts' } } }),
+        sse({ type: 'content_block_stop', index: 0 }),
+      ],
+    })
+    const events = await collect(anthropic().chatStream(http, req()))
+    const deltas = events.filter((e): e is Extract<LlmStreamEvent, { kind: 'toolCallDelta' }> => e.kind === 'toolCallDelta')
+    expect(deltas).toEqual([
+      { kind: 'toolCallDelta', index: 0, call: { id: 'tu_gw', function: { name: 'read_file', arguments: '{"path":"a.ts"}' } } },
+    ])
+    expect(JSON.parse(deltas[0]?.call.function.arguments ?? '')).toEqual({ path: 'a.ts' })
+  })
+
+  it('请求阶段已 abort：静默结束，不产出事件也不抛错', async () => {
+    const http = new FakeHttp({ throwOnRequest: new Error('socket hang up') })
+    const ac = new AbortController()
+    ac.abort()
+    const events = await collect(anthropic().chatStream(http, req(), ac.signal))
+    expect(events).toEqual([])
+  })
+
+  it('流中 abort：干净收尾（补 usage + done）而不抛错', async () => {
+    const enc = new TextEncoder()
+    // 首帧正常下发后挂起（不 close），由 abort 触发 reader.cancel 结束流
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const frame =
+          sse({ type: 'message_start', message: { usage: { input_tokens: 7 } } }) +
+          sse({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }) +
+          sse({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '你好' } })
+        controller.enqueue(enc.encode(frame))
+      },
+    })
+    const http: HttpClientLike = { request: async () => ({ status: 200, headers: {}, body }) }
+    const ac = new AbortController()
+    const events: LlmStreamEvent[] = []
+    for await (const e of anthropic().chatStream(http, req(), ac.signal)) {
+      events.push(e)
+      if (e.kind === 'chunk') ac.abort()
+    }
+    expect(events.map((e) => e.kind)).toEqual(['chunk', 'usage', 'done'])
+    const usage = events.find((e): e is Extract<LlmStreamEvent, { kind: 'usage' }> => e.kind === 'usage')
+    expect(usage?.usage.promptTokens).toBe(7)
+  })
+
+  it('流读取失败且已 abort：不抛错，只补 done', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('connection reset'))
+      },
+    })
+    const http: HttpClientLike = { request: async () => ({ status: 200, headers: {}, body }) }
+    const ac = new AbortController()
+    ac.abort()
+    const events = await collect(anthropic().chatStream(http, req(), ac.signal))
+    expect(events).toEqual([{ kind: 'done' }])
   })
 
   it('thinking 增量映射为 reasoning；signature 块不误当思考文本', async () => {

@@ -212,6 +212,11 @@ describe('spawn_subagent 结果拼接', () => {
     expect(r.content).toContain('--- 子代理总结 ---')
   })
 
+  it('child.run reject 时异常上抛（由上层 registry.execute 统一包装为失败结果）', async () => {
+    mocks.run.mockRejectedValue(new Error('子代理内部爆炸'))
+    await expect(run({ task: 'x' }, makeCtx(makeParent()))).rejects.toThrow('子代理内部爆炸')
+  })
+
   it('usage 与轮次插值', async () => {
     mocks.run.mockResolvedValue(fakeResult({ iterations: 7, usage: { totalTokens: 1234 } as AgentResult['usage'] }))
     const r = await run({ task: 'x' }, makeCtx(makeParent()))
