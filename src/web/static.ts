@@ -97,7 +97,10 @@ export function indexPageHandler(workingDir: string): (req: Request, res: Respon
 /** /static/* → 托管目录下的静态资源（不存在时 404） */
 export function staticFileHandler(workingDir: string): (req: Request, res: Response) => void {
   return (req, res) => {
-    const rel = (req.path || '').replace(/^\/+/, '')
+    // 必须取通配参数（req.path 含挂载前缀 /static）；Express 5 的命名通配捕获是
+    // 多段数组（assets/app.css → ['assets','app.css']），不能直接 String() 否则逗号拼接
+    const raw: unknown = req.params.filepath
+    const rel = (Array.isArray(raw) ? raw.join('/') : String(raw ?? '')).replace(/^\/+/, '')
     if (!rel || rel.includes('..')) {
       res.status(400).end('bad path')
       return
@@ -108,6 +111,7 @@ export function staticFileHandler(workingDir: string): (req: Request, res: Respo
       res.status(404).end('not found')
       return
     }
-    res.sendFile(abs)
+    // 托管目录以 . 开头，send 默认 dotfiles:'ignore' 会把整条路径当不存在，需显式放行
+    res.sendFile(abs, { dotfiles: 'allow' })
   }
 }

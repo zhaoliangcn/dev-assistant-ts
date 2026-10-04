@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express'
-import { appendFileSync, readFileSync } from 'node:fs'
+import { writeFileSync, readFileSync } from 'node:fs'
 import { SessionStore } from '../../persist/session-store.js'
 import { log } from '../../utils/logger.js'
 
@@ -89,7 +89,8 @@ export function sessionsRouter(workingDir: string): Router {
       res.status(404).json({ error: `会话不存在: ${req.params.id}` })
       return
     }
-    appendFileSync(`${target.file}.title`, `${title}\n`)
+    // 覆盖写：rename 语义是最后一次生效，append 会让标题逐次累积
+    writeFileSync(`${target.file}.title`, `${title}\n`)
     res.json({ ok: true, sessionId: target.sessionId, title })
   })
 

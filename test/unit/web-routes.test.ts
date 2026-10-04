@@ -592,6 +592,16 @@ describe('sessionsRouter（/api/sessions）', () => {
     expect(list.body.sessions.find((s: any) => s.sessionId === SESSION_B).title).toBe('重构计划 v2')
   })
 
+  it('POST /:id/rename 重复改名以最后一次为准（覆盖写 sidecar）', async () => {
+    await req(base, 'POST', `/api/sessions/${SESSION_B}/rename`, { title: '第一次' })
+    const r = await req(base, 'POST', `/api/sessions/${SESSION_B}/rename`, { title: '第二次' })
+    expect(r.status).toBe(200)
+    expect(r.body.title).toBe('第二次')
+    expect(await readFile(path.join(store, `session_${SESSION_B}.jsonl.title`), 'utf8')).toBe('第二次\n')
+    const list = await req(base, 'GET', '/api/sessions')
+    expect(list.body.sessions.find((s: any) => s.sessionId === SESSION_B).title).toBe('第二次')
+  })
+
   it('GET /:id/export 原样返回 JSONL 并带下载头', async () => {
     const res = await fetch(`${base}/api/sessions/${SESSION_A}/export`)
     expect(res.status).toBe(200)

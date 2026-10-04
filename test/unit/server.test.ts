@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AddressInfo } from 'node:net'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { WebSocket } from 'ws'
@@ -126,6 +126,32 @@ describe('HTTP 路由透传（经 buildRouter）', () => {
   })
 })
 
+describe('静态页面与资源（经 buildRouter 真实挂载）', () => {
+  it('GET / 无托管目录时返回内置聊天页', async () => {
+    const handle = await start()
+    const res = await fetch(`${handle.url}/`)
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('<!doctype html>')
+    expect(body).toContain('/ws/chat')
+  })
+
+  it('GET /static/<file> 映射到 .dev-assistant-web 根（无双重 static/ 前缀）', async () => {
+    await mkdir(path.join(dir, '.dev-assistant-web'), { recursive: true })
+    await writeFile(path.join(dir, '.dev-assistant-web', 'app.js'), 'console.log(1)', 'utf8')
+    const handle = await start()
+    const res = await fetch(`${handle.url}/static/app.js`)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('console.log(1)')
+  })
+
+  it('GET /static/ 不存在 → 404；URL 编码穿越 %2e%2e 被 fetch 归一化折叠 → 404 兜底', async () => {
+    const handle = await start()
+    expect((await fetch(`${handle.url}/static/nope.js`)).status).toBe(404)
+    expect((await fetch(`${handle.url}/static/%2e%2e/secret`)).status).toBe(404)
+  })
+})
+
 describe('/ws/chat 聊天协议', () => {
   async function connect(handle: WebServerHandle): Promise<{ ws: WebSocket; received: ServerEvent[] }> {
     const ws = new WebSocket(handle.url.replace('http://', 'ws://') + '/ws/chat')
@@ -215,6 +241,36 @@ describe('/ws/chat 聊天协议', () => {
     })
     expect(received.find((e) => e.type === 'error')).toEqual({ type: 'error', content: 'LLM 炸了' })
     expect(received.find((e) => e.type === 'done')).toEqual({ type: 'done', messageId: '1' })
+    await closeWs(ws)
+  })
+
+  it('前一个任务未完成时新 user_message → busy 错误；完成后恢复接收', async () => {
+    let release!: (v: { success: boolean; message: string }) => void
+    const gate = new Promise<{ success: boolean; message: string }>((r) => (release = r))
+    const { app, run } = fakeApp()
+    run.mockImplementation(async () => gate)
+    const handle = await startWeb({ app, port: 0 })
+    handles.push(handle)
+    const { ws, received } = await connect(handle)
+    await vi.waitFor(() => expect(received.some((e) => e.type === 'session_ready')).toBe(true))
+
+    ws.send(JSON.stringify({ type: 'user_message', content: '第一条' }))
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1))
+    ws.send(JSON.stringify({ type: 'user_message', content: '第二条' }))
+    await vi.waitFor(() => expect(received.some((e) => e.type === 'error')).toBe(true))
+    expect(received.find((e) => e.type === 'error')).toEqual({
+      type: 'error',
+      content: '当前任务仍在运行，请先等待完成或发送 cancel',
+    })
+
+    release({ success: true, message: 'echo:第一条' })
+    await vi.waitFor(() => expect(received.some((e) => e.type === 'done')).toBe(true))
+    expect(received.find((e) => e.type === 'done')).toEqual({ type: 'done', messageId: '1' })
+
+    // finally 复位 running 后，新消息可正常处理
+    ws.send(JSON.stringify({ type: 'user_message', content: '第三条' }))
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2))
+    expect(run).toHaveBeenLastCalledWith('第三条')
     await closeWs(ws)
   })
 })

@@ -6,7 +6,9 @@ import { indexPageHandler, staticFileHandler } from '../../src/web/static.js'
 import type { Request, Response } from 'express'
 
 /**
- * 静态资源 handler 单测：直接调用 handler（express 层挂载在 server.test.ts 覆盖）。
+ * 静态资源 handler 单测：直接调用 handler，mock req 只带挂载路由 /static/*filepath
+ * 捕获到的命名通配参数（真实挂载下 req.path 是完整路径 /static/...，handler 不用它）。
+ * HTTP 级挂载（GET / 与 /static/*）在 server.test.ts 覆盖。
  * - indexPageHandler：无托管目录 → 内置页；有 .dev-assistant-web/index.html → 自定义页
  * - staticFileHandler：空路径/路径穿越 → 400；越界解析或不存在 → 404；正常 → sendFile
  */
@@ -23,8 +25,9 @@ async function setup(): Promise<string> {
   return d
 }
 
-function makeReq(pathname: string): Request {
-  return { path: pathname } as unknown as Request
+/** 模拟挂载在 /static/*filepath 上的 handler 收到的 req（Express 5 的通配捕获是多段数组） */
+function makeReq(filepath: string | string[]): Request {
+  return { params: { filepath } } as unknown as Request
 }
 
 type MockRes = Response & {
@@ -80,38 +83,35 @@ describe('staticFileHandler', () => {
     expect(res.end).toHaveBeenCalledWith('bad path')
   })
 
-  it('含 .. 的路径 → 400 bad path', async () => {
+  it('含 .. 的路径 → 400 bad path（含深层穿越与 URL 编码形式）', async () => {
     dir = await setup()
-    const res = makeRes()
-    staticFileHandler(dir)(makeReq('/../etc/passwd'), res)
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.end).toHaveBeenCalledWith('bad path')
+    for (const fp of ['../etc/passwd', 'a/../../etc/passwd']) {
+      const res = makeRes()
+      staticFileHandler(dir)(makeReq(fp), res)
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.end).toHaveBeenCalledWith('bad path')
+    }
   })
 
-  it('存在的文件 → sendFile 解析后的绝对路径', async () => {
+  it('存在的文件 → sendFile 解析后的绝对路径（根与子目录，不叠加 static/ 前缀）', async () => {
     dir = await setup()
-    await mkdir(webDir(dir), { recursive: true })
+    await mkdir(path.join(webDir(dir), 'assets'), { recursive: true })
     await writeFile(path.join(webDir(dir), 'app.js'), 'console.log(1)', 'utf8')
-    const res = makeRes()
-    staticFileHandler(dir)(makeReq('/app.js'), res)
-    expect(res.sendFile).toHaveBeenCalledWith(path.join(webDir(dir), 'app.js'))
+    await writeFile(path.join(webDir(dir), 'assets', 'app.css'), 'body{}', 'utf8')
+    const resRoot = makeRes()
+    staticFileHandler(dir)(makeReq('app.js'), resRoot)
+    expect(resRoot.sendFile).toHaveBeenCalledWith(path.join(webDir(dir), 'app.js'), { dotfiles: 'allow' })
+    // Express 5 实际下发的是多段数组（回归：数组被 String() 成 "assets,app.css" 会解析到错误路径）
+    const resNested = makeRes()
+    staticFileHandler(dir)(makeReq(['assets', 'app.css']), resNested)
+    expect(resNested.sendFile).toHaveBeenCalledWith(path.join(webDir(dir), 'assets', 'app.css'), { dotfiles: 'allow' })
   })
 
   it('不存在的文件 → 404 not found', async () => {
     dir = await setup()
     const res = makeRes()
-    staticFileHandler(dir)(makeReq('/nope.js'), res)
+    staticFileHandler(dir)(makeReq('nope.js'), res)
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.end).toHaveBeenCalledWith('not found')
-  })
-
-  it('解析结果逃逸托管目录（绝对路径重置）→ 404', async () => {
-    dir = await setup()
-    const res = makeRes()
-    // path.resolve(root, '/etc/passwd') → '/etc/passwd'，不在托管目录内
-    staticFileHandler(dir)(makeReq('/etc/passwd'), res)
-    expect(res.status).toHaveBeenCalledWith(404)
-    expect(res.end).toHaveBeenCalledWith('not found')
-    expect(res.sendFile).not.toHaveBeenCalled()
   })
 })
