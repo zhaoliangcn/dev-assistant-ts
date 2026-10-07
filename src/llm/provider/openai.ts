@@ -149,7 +149,11 @@ export class OpenAIBase implements LlmProvider {
       throw httpError(res.status, text, res.headers)
     }
 
-    // 记录每个 index 已发出的 call 快照，仅在变化时重发
+    // 记录每个 index 已发出的 call 快照，仅在变化时重发。
+    // 按契约每次 yield 的 call 携带该 index 当前已知的【完整】内容：
+    // 标准OpenAI 协议的 delta 是分片（需累积），部分网关直接发完整快照（需覆盖），
+    // mergeArgs 以「快照前缀命中则覆盖，否则拼接」同时兼容两种形态。
+    const accByIdx: Array<{ id: string; name: string; args: string }> = []
     const emitted: Array<{ id: string; name: string; arguments: string }> = []
     let usage: TokenUsage | undefined
 
@@ -170,20 +174,27 @@ export class OpenAIBase implements LlmProvider {
         for (let i = 0; i < delta.toolCalls.length; i++) {
           const c = delta.toolCalls[i]
           if (!c) continue
+          const acc = accByIdx[i] ?? { id: '', name: '', args: '' }
+          const next = {
+            id: c.id || acc.id,
+            name: mergeSnapshotField(acc.name, c.name),
+            args: mergeSnapshotField(acc.args, c.arguments),
+          }
+          accByIdx[i] = next
           const prev = emitted[i]
           if (
             !prev ||
-            prev.id !== c.id ||
-            prev.name !== c.name ||
-            prev.arguments !== c.arguments
+            prev.id !== next.id ||
+            prev.name !== next.name ||
+            prev.arguments !== next.args
           ) {
-            emitted[i] = { id: c.id, name: c.name, arguments: c.arguments }
+            emitted[i] = { id: next.id, name: next.name, arguments: next.args }
             yield {
               kind: 'toolCallDelta',
               index: i,
               call: {
-                id: c.id,
-                function: { name: c.name, arguments: c.arguments },
+                id: next.id,
+                function: { name: next.name, arguments: next.args },
               },
             }
           }
@@ -200,6 +211,18 @@ export class OpenAIBase implements LlmProvider {
     if (usage) yield { kind: 'usage', usage }
     yield { kind: 'done' }
   }
+}
+
+/**
+ * 合并流式字段：incoming 是完整快照（以 acc 为前缀且更长）时覆盖；
+ * incoming 是增量分片时拼接；旧值更长（重复回放）时保留旧值。
+ */
+function mergeSnapshotField(acc: string, incoming: string): string {
+  if (!incoming) return acc
+  if (!acc) return incoming
+  if (incoming.length >= acc.length && incoming.startsWith(acc)) return incoming
+  if (acc.length > incoming.length && acc.startsWith(incoming)) return acc
+  return acc + incoming
 }
 
 export class OpenAIProvider extends OpenAIBase {

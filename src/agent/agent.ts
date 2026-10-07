@@ -167,6 +167,7 @@ export class Agent {
       sessionId: this.sessionId,
       signal: abort.signal,
       agent: this,
+      scheduler: this.opts.scheduler,
     }
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {

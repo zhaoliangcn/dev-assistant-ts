@@ -21,8 +21,11 @@ export type { AgentEvent, AgentResult, ProviderConfig }
  * 事件分发：模块独占 App.setOnEvent 全局槽位作为唯一分发器；
  * WS 层（chat.ts）的 setOnEvent 经 wsHandle 代理到模块的 WS sink，不互相覆盖。
  *
- * 嵌入安全默认：审批在无终端场景下自动通过（宿主应把 workingDir 限定在受控目录，
- * 文件工具内置路径越界防护，exec_command 等 critical 工具由宿主按场景决定是否裁剪）。
+ * 嵌入安全默认：审批在无终端场景下自动通过（宿主应把 workingDir 限定在受控目录）。
+ * 文件工具经 resolveInWorkDir 收敛到 workingDir 内（绝对路径越界/`..`/盘符切换/UNC
+ * 及符号链接逃逸会被拒绝）。exec_command 等 critical 工具由宿主按场景决定是否裁剪。
+ * hooks 默认关闭：hook 定义来自 workingDir 内的 .dev-assistant-hooks.toml（模型可写），
+ * 构成审批体系之外的执行通道，宿主确需启用时应显式传入 hooksEnabled: true。
  */
 
 export interface AssistantStartOptions {
@@ -39,6 +42,14 @@ export interface AssistantStartOptions {
   approvalEnabled?: boolean
   /** 按名称裁剪工具（嵌入场景建议至少禁 exec_command/run_hook，关闭任意命令执行面） */
   disabledTools?: string[]
+  /**
+   * hooks 开关（嵌入默认 false）。
+   * hook 定义来自 workingDir 内 .dev-assistant-hooks.toml（模型可写），执行不经过
+   * 审批管线；嵌入场景除非明确需要，否则保持关闭以防注入内容借配置自动执行命令。
+   */
+  hooksEnabled?: boolean
+  /** hooks 演练模式：只记录将执行的命令，不真正执行 */
+  hooksDryRun?: boolean
   maxIterations?: number
   maxTokens?: number
 }
@@ -122,6 +133,8 @@ export function createAssistantModule(): AssistantModule {
         approvalEnabled: options.approvalEnabled ?? false,
         disabledTools: options.disabledTools,
         schedulerEnabled: options.schedulerEnabled ?? true,
+        hooksEnabled: options.hooksEnabled ?? false,
+        hooksDryRun: options.hooksDryRun,
       })
       // 模块独占全局事件槽位（WS 层经 wsHandle 代理，不竞争）
       app.setOnEvent((e) => dispatch(e as AgentEvent))

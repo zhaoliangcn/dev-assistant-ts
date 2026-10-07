@@ -22,16 +22,26 @@ export interface ApprovalRecord {
 
 export type ConfirmHandler = (requirement: ApprovalRequirement, scope: string) => Promise<boolean>
 
+/** 确认回调默认超时：超时按拒绝处理（fail-closed） */
+export const DEFAULT_CONFIRM_TIMEOUT_MS = 120_000
+
 export class ApprovalManager {
   private approvals = new Map<string, ApprovalRecord>()
   /** --no-approval 模式：全部自动通过 */
   private disabled = false
+  /** 确认回调超时：宿主桥挂起时按拒绝处理，避免 agent.run 永久阻塞 */
+  private confirmTimeoutMs = DEFAULT_CONFIRM_TIMEOUT_MS
 
   constructor(private confirm: ConfirmHandler) {}
 
   /** 替换确认回调（如 CLI 从终端 prompt 切到 ink UI 审批桥） */
   setConfirm(confirm: ConfirmHandler): void {
     this.confirm = confirm
+  }
+
+  /** 调整确认超时（毫秒；超时按拒绝处理） */
+  setConfirmTimeout(ms: number): void {
+    if (Number.isFinite(ms) && ms > 0) this.confirmTimeoutMs = ms
   }
 
   /** 关闭审批（对应 CLI --no-approval） */
@@ -84,18 +94,27 @@ export class ApprovalManager {
     scope: string,
     _record: boolean,
   ): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const confirmed = await this.confirm(requirement, scope)
+      // 严格布尔 + 超时兜底：宿主桥返回非布尔/truthy 不得视为批准，挂起按拒绝处理
+      const confirmed = await Promise.race([
+        Promise.resolve(this.confirm(requirement, scope)).then((v) => v === true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), this.confirmTimeoutMs)
+        }),
+      ])
       if (confirmed) {
         log.info('审批通过', { level: requirement.dangerThreshold, scope })
       } else {
-        log.warn('审批被拒绝', { level: requirement.dangerThreshold, scope })
+        log.warn('审批被拒绝或确认超时', { level: requirement.dangerThreshold, scope })
       }
       return confirmed
     } catch (e) {
       // 确认过程出错视为拒绝（安全优先）
       log.error(`审批确认过程出错: ${e instanceof Error ? e.message : String(e)}`)
       return false
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 

@@ -26,6 +26,9 @@ const DEFAULT_APPROVAL: Record<DangerLevel, { type: 'auto' | 'one-time' | 'sessi
 export function evaluateTool(spec: ToolSpec, args: Record<string, unknown>): SecurityEvaluation {
   let level = spec.dangerLevel
   const reasons: string[] = []
+  // 敏感路径命中时把 session 级审批升级为 one-time：
+  // session 批准在有效期内放行反复写入，对 .git/hooks、.ssh 等目标等于一次批准永久后门
+  let escalateToOneTime = false
 
   // 动态升级：exec_command 根据命令内容判定
   if (spec.name === 'exec_command') {
@@ -37,22 +40,25 @@ export function evaluateTool(spec: ToolSpec, args: Record<string, unknown>): Sec
     }
   }
 
-  // 动态升级：写操作目标路径敏感（.git、系统目录等）
+  // 动态升级：写操作目标路径敏感（.git、.ssh、系统目录等）
   if (level === 'high' && (spec.name === 'write_file' || spec.name === 'edit_file')) {
     const path = typeof args.path === 'string' || typeof args.file_path === 'string'
       ? ((args.path ?? args.file_path) as string)
       : ''
     if (isSensitivePath(path)) {
       reasons.push(`敏感路径: ${path}`)
+      escalateToOneTime = true
     }
   }
 
   const approval = DEFAULT_APPROVAL[level]
+  const baseType = spec.approvalType ?? approval.type
+  const approvalType = escalateToOneTime && baseType === 'session' ? 'one-time' : baseType
   const approvalRequirement: ApprovalRequirement = {
-    approvalType: spec.approvalType ?? approval.type,
+    approvalType,
     dangerThreshold: level,
-    requiresUserConfirmation: (spec.approvalType ?? approval.type) !== 'auto',
-    validitySeconds: spec.validitySeconds ?? approval.validitySeconds,
+    requiresUserConfirmation: approvalType !== 'auto',
+    validitySeconds: approvalType === baseType ? (spec.validitySeconds ?? approval.validitySeconds) : 0,
     scope: spec.approvalScope ?? 'none',
   }
 

@@ -1,6 +1,7 @@
 import type { ToolSpec } from '../spec.js'
 import type { ToolHandler } from '../registry.js'
 import { argString, argNumber, argBoolean } from '../common.js'
+import { resolveInWorkDir } from '../file/common.js'
 import { runShell } from '../../hooks/shell.js'
 
 /**
@@ -44,7 +45,7 @@ export const execCommandHandler: ToolHandler = async (args, ctx) => {
   )
   const allowFailure = argBoolean(args.arguments, 'allow_failure') ?? false
   const cwd = argString(args.arguments, 'cwd')
-    ? resolveCwd(ctx.workingDir, argString(args.arguments, 'cwd')!)
+    ? resolveInWorkDir(ctx.workingDir, argString(args.arguments, 'cwd')!)
     : ctx.workingDir
 
   if (ctx.signal?.aborted) {
@@ -77,10 +78,6 @@ export const execCommandHandler: ToolHandler = async (args, ctx) => {
     restartRequested: false,
     errorCategory: success ? undefined : 'permanent',
   }
-}
-
-function resolveCwd(workingDir: string, p: string): string {
-  return p.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(p) ? p : `${workingDir}/${p}`
 }
 
 function fail(message: string) {
